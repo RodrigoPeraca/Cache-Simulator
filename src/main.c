@@ -130,7 +130,7 @@ int main() {
             int acessou_L2 = 0;
 
             // Chama a função correspondente
-            if (is_lru) hit = acessar_cache_lru(endereco);
+            if (is_lru) hit = acessar_cache_lru(0, endereco);
             else if (is_mockingjay) hit = acessar_cache_mockingjay(endereco);
 
             if (hit){ stats.hits++;
@@ -140,7 +140,7 @@ int main() {
                 acessou_L2 = 1;
                 stats_L2.acessos_totais++;                
 
-                if (is_lru) hit_L2 = acessar_L2_lru(endereco);
+                if (is_lru) hit_L2 = acessar_L2_lru(0, endereco);
                 else if (is_mockingjay) hit_L2 = acessar_L2_mockingjay(endereco);
 
                 if (hit_L2) {
