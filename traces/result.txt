@@ -1,0 +1,27 @@
+=== RESULTADOS: LRU ===
+Arquivo: intermittent_reuse.txt
+
+[CACHE L1 - DADOS]
+Acessos Totais: 29
+Hits: 25
+Misses: 4
+Hit Rate: 86.21%
+
+[CACHE L2 - UNIFICADA]
+Acessos Totais: 4 (Apenas os Misses da L1 chegam aqui)
+Hits: 1 | Misses: 3
+Hit Rate L2: 25.00%
+
+=== RESULTADOS: Mockingjay ===
+Arquivo: intermittent_reuse.txt
+
+[CACHE L1 - DADOS]
+Acessos Totais: 29
+Hits: 25
+Misses: 4
+Hit Rate: 86.21%
+
+[CACHE L2 - UNIFICADA]
+Acessos Totais: 4 (Apenas os Misses da L1 chegam aqui)
+Hits: 1 | Misses: 3
+Hit Rate L2: 25.00%

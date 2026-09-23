@@ -10,13 +10,13 @@ typedef struct {
     int intervalo_previsto; // O "padrão" aprendido pela heurística
 } CacheLine;
 
-CacheLine cache[NUM_CONJUNTOS][NUM_VIAS];
-CacheLine cache_L2[L2_NUM_CONJUNTOS][L2_NUM_VIAS]; // Para simular a cache L2 unificada
+CacheLine cache[L1_NUM_SETS][L1_NUM_WAYS];
+CacheLine cache_L2[L2_NUM_SETS][L2_NUM_WAYS]; // Para simular a cache L2 deste algoritmo
 int relogio_global = 0;
 
 void inicializar_cache_mockingjay() {
-    for (int i = 0; i < NUM_CONJUNTOS; i++) {
-        for (int j = 0; j < NUM_VIAS; j++) {
+    for (int i = 0; i < L1_NUM_SETS; i++) {
+        for (int j = 0; j < L1_NUM_WAYS; j++) {
             cache[i][j].valid = 0;
             cache[i][j].tag = 0;
             cache[i][j].ultimo_acesso = 0;
@@ -28,11 +28,11 @@ void inicializar_cache_mockingjay() {
 }
 
 int calcular_conjunto(uint32_t endereco) {
-    return (endereco / BLOCK_SIZE_BYTES) % NUM_CONJUNTOS;
+    return (endereco / L1_BLOCK_SIZE_BYTES) % L1_NUM_SETS;
 }
 
 uint32_t calcular_tag(uint32_t endereco) {
-    return endereco / (BLOCK_SIZE_BYTES * NUM_CONJUNTOS);
+    return endereco / (L1_BLOCK_SIZE_BYTES * L1_NUM_SETS);
 }
 
 int acessar_cache_mockingjay(uint32_t endereco) {
@@ -42,7 +42,7 @@ int acessar_cache_mockingjay(uint32_t endereco) {
     relogio_global++; // O tempo avança a cada instrução lida
 
     // 1. Verificar HIT
-    for (int v = 0; v < NUM_VIAS; v++) {
+    for (int v = 0; v < L1_NUM_WAYS; v++) {
         if (cache[conjunto][v].valid && cache[conjunto][v].tag == tag) {
             // FASE DE APRENDIZADO (Warm-up)
             int tempo_passado = relogio_global - cache[conjunto][v].ultimo_acesso;
@@ -59,7 +59,7 @@ int acessar_cache_mockingjay(uint32_t endereco) {
     int via_substituir = -1;
     int max_etr = -1; // Maior Tempo Estimado de Reuso (vítima)
 
-    for (int v = 0; v < NUM_VIAS; v++) {
+    for (int v = 0; v < L1_NUM_WAYS; v++) {
         // Se a via está vazia, ocupa ela sem expulsar ninguém
         if (!cache[conjunto][v].valid) {
             via_substituir = v;
@@ -93,11 +93,11 @@ int acessar_cache_mockingjay(uint32_t endereco) {
 }
 
 int acessar_L2_mockingjay(uint32_t endereco) {
-    uint32_t conjunto = (endereco / L2_BLOCK_SIZE) % L2_NUM_CONJUNTOS;
-    uint32_t tag = endereco / (L2_BLOCK_SIZE * L2_NUM_CONJUNTOS);
+    uint32_t conjunto = (endereco / L2_BLOCK_SIZE_BYTES) % L2_NUM_SETS;
+    uint32_t tag = endereco / (L2_BLOCK_SIZE_BYTES * L2_NUM_SETS);
 
     // 1. Tentar o Hit na L2
-    for (int v = 0; v < L2_NUM_VIAS; v++) {
+    for (int v = 0; v < L2_NUM_WAYS; v++) {
         if (cache_L2[conjunto][v].valid && cache_L2[conjunto][v].tag == tag) {
             // Usa o mesmo relógio da CPU para calcular o intervalo da L2
             int tempo_passado = relogio_global - cache_L2[conjunto][v].ultimo_acesso;
@@ -111,7 +111,7 @@ int acessar_L2_mockingjay(uint32_t endereco) {
     int via_substituir = 0;
     int max_etr = -1;
 
-    for (int v = 0; v < L2_NUM_VIAS; v++) {
+    for (int v = 0; v < L2_NUM_WAYS; v++) {
         if (!cache_L2[conjunto][v].valid) {
             via_substituir = v;
             break; 
@@ -135,41 +135,41 @@ int acessar_L2_mockingjay(uint32_t endereco) {
 
 void imprimir_estado_mockingjay(uint32_t endereco) {
    printf("\n[MOCKINGJAY] === ESTADO ATUAL DA CACHE L1 ===\n");
-    for (int i = 0; i < NUM_CONJUNTOS; i++) {
+    for (int i = 0; i < L1_NUM_SETS; i++) {
         int conjunto_tem_dado = 0;
-        for (int j = 0; j < NUM_VIAS; j++) {
+        for (int j = 0; j < L1_NUM_WAYS; j++) {
             if (cache[i][j].valid) { conjunto_tem_dado = 1; break; }
         }
         if (!conjunto_tem_dado) continue;
 
         printf("Conjunto %d: ", i);
-        for (int j = 0; j < NUM_VIAS; j++) {
+        for (int j = 0; j < L1_NUM_WAYS; j++) {
             if (cache[i][j].valid) {
                 printf("[Tag: 0x%X | IntPreditivo: %d]", cache[i][j].tag, cache[i][j].intervalo_previsto);
             } else {
                 printf("[Vazio]");
             }
-            if (j < NUM_VIAS - 1) printf(" | ");
+            if (j < L1_NUM_WAYS - 1) printf(" | ");
         }
         printf("\n");
     }
 
     printf("\n[MOCKINGJAY] === ESTADO ATUAL DA CACHE L2 ===\n");
-    for (int i = 0; i < L2_NUM_CONJUNTOS; i++) {
+    for (int i = 0; i < L2_NUM_SETS; i++) {
         int conjunto_tem_dado = 0;
-        for (int j = 0; j < L2_NUM_VIAS; j++) {
+        for (int j = 0; j < L2_NUM_WAYS; j++) {
             if (cache_L2[i][j].valid) { conjunto_tem_dado = 1; break; }
         }
         if (!conjunto_tem_dado) continue;
 
         printf("Conjunto %d: ", i);
-        for (int j = 0; j < L2_NUM_VIAS; j++) {
+        for (int j = 0; j < L2_NUM_WAYS; j++) {
             if (cache_L2[i][j].valid) {
                 printf("[Tag: 0x%X | IntPreditivo: %d]", cache_L2[i][j].tag, cache_L2[i][j].intervalo_previsto);
             } else {
                 printf("[Vazio]");
             }
-            if (j < L2_NUM_VIAS - 1) printf(" | ");
+            if (j < L2_NUM_WAYS - 1) printf(" | ");
         }
         printf("\n");
     }
