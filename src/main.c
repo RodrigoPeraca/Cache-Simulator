@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <errno.h>
+#include <limits.h>
 #include <dirent.h> // Biblioteca necessária para ler diretórios
 
 #include "../include/cache.h"
@@ -10,6 +12,30 @@
 
 #define MAX_TRACES 50
 #define MAX_FILENAME_LEN 256
+
+static int ler_acesso(FILE *file, CacheAccessType *tipo_acesso, uint32_t *endereco) {
+    char token[32];
+    char endereco_token[32];
+    char *fim;
+
+    if (fscanf(file, "%31s", token) != 1) return 0;
+
+    if (token[1] == '\0' && (token[0] == 'R' || token[0] == 'r' ||
+                              token[0] == 'W' || token[0] == 'w')) {
+        *tipo_acesso = (token[0] == 'W' || token[0] == 'w') ? ACCESS_WRITE : ACCESS_READ;
+        if (fscanf(file, "%31s", endereco_token) != 1) return -1;
+    } else {
+        *tipo_acesso = ACCESS_READ;
+        strcpy(endereco_token, token);
+    }
+
+    errno = 0;
+    unsigned long valor = strtoul(endereco_token, &fim, 16);
+    if (errno == ERANGE || *fim != '\0' || valor > UINT32_MAX || fim == endereco_token) return -1;
+
+    *endereco = (uint32_t)valor;
+    return 1;
+}
 
 int main() {
     char algoritmos[2][15] = {"LRU", "Mockingjay"};
@@ -106,6 +132,7 @@ int main() {
 
         CacheStats stats = {0, 0, 0};
         CacheStats stats_L2 = {0, 0, 0}; // Para estatísticas da L2
+        CacheStats stats_L3 = {0, 0, 0}; // L3 unificada, usada pelo caminho LRU
 
         int is_lru = (op_algo == 1);
         int is_mockingjay = (op_algo == 2);
@@ -114,6 +141,7 @@ int main() {
         else if (is_mockingjay) inicializar_cache_mockingjay();
 
         uint32_t endereco;
+        CacheAccessType tipo_acesso;
         
         // Limpa o buffer do teclado antes de entrar no loop de execução para não pular o primeiro 'Passo a Passo'
         while ((getchar()) != '\n'); 
@@ -123,14 +151,17 @@ int main() {
             printf("MODO PASSO A PASSO ATIVADO. Pressione [ENTER] para avancar ou 'q' para interromper.\n\n");
         }
         
-        while (fscanf(file, "%x", &endereco) != EOF) {
+        int status_acesso;
+        while ((status_acesso = ler_acesso(file, &tipo_acesso, &endereco)) > 0) {
             stats.acessos_totais++;
             int hit = 0;
             int hit_L2 = 0;
+            int hit_L3 = 0;
             int acessou_L2 = 0;
+            int acessou_L3 = 0;
 
             // Chama a função correspondente
-            if (is_lru) hit = acessar_cache_lru(0, endereco);
+            if (is_lru) hit = acessar_cache_lru(0, endereco, tipo_acesso);
             else if (is_mockingjay) hit = acessar_cache_mockingjay(endereco);
 
             if (hit){ stats.hits++;
@@ -140,7 +171,7 @@ int main() {
                 acessou_L2 = 1;
                 stats_L2.acessos_totais++;                
 
-                if (is_lru) hit_L2 = acessar_L2_lru(0, endereco);
+                if (is_lru) hit_L2 = acessar_L2_lru(0, endereco, tipo_acesso);
                 else if (is_mockingjay) hit_L2 = acessar_L2_mockingjay(endereco);
 
                 if (hit_L2) {
@@ -148,17 +179,27 @@ int main() {
                     // Opcional/Avançado: Trazer o bloco da L2 para a L1 (forçando uma inserção/expulsão na L1)
                 } else {
                     stats_L2.misses++;
-                    // Deu Miss em tudo! Busca na RAM (Insere na L2 e depois insere na L1)
+                    if (is_lru) {
+                        acessou_L3 = 1;
+                        stats_L3.acessos_totais++;
+                        hit_L3 = acessar_L3_lru(endereco, tipo_acesso);
+                        if (hit_L3) stats_L3.hits++;
+                        else stats_L3.misses++;
+                    }
                 }
             }
             
             // Lógica do Modo Passo a Passo
             if (modo_execucao == 2) {
                 printf("==========================================\n");
-                printf("Acesso %d: Endereco 0x%04X -> %s\n", stats.acessos_totais, endereco, hit ? "HIT" : "MISS");
+                  printf("Acesso %d: %c 0x%04X -> %s\n", stats.acessos_totais,
+                      tipo_acesso == ACCESS_WRITE ? 'W' : 'R', endereco, hit ? "HIT" : "MISS");
                 
                 if (acessou_L2) {
                     printf("  L2: Endereco 0x%04X -> %s\n", endereco, hit_L2 ? "HIT" : "MISS");
+                }
+                if (acessou_L3) {
+                    printf("  L3: Endereco 0x%04X -> %s\n", endereco, hit_L3 ? "HIT" : "MISS");
                 }
                 // Opcional: Imprime o estado interno da cache para vocês conferirem
                 if (is_lru) imprimir_estado_lru();
@@ -175,6 +216,9 @@ int main() {
             }
 
         }
+        if (status_acesso < 0) {
+            printf("\n[!] Registro de trace invalido. Use 'R endereco', 'W endereco' ou apenas 'endereco'.\n");
+        }
         fclose(file);
 
         // 6. Exibindo os Resultados Finais
@@ -189,10 +233,20 @@ int main() {
         printf("Misses: %d\n", stats.misses);
         printf("Hit Rate: %.2f%%\n", hit_rate);
 
-        printf("\n[CACHE L2 - UNIFICADA]\n");
+        printf("\n[CACHE L2 - %s]\n", is_lru ? "PRIVADA POR NUCLEO" : "UNIFICADA");
         printf("Acessos Totais: %d (Apenas os Misses da L1 chegam aqui)\n", stats_L2.acessos_totais);
         printf("Hits: %d | Misses: %d\n", stats_L2.hits, stats_L2.misses);
         printf("Hit Rate L2: %.2f%%\n", hr_L2);
+
+        if (is_lru) {
+            double hr_L3 = (stats_L3.acessos_totais > 0)
+                ? ((double)stats_L3.hits / stats_L3.acessos_totais) * 100.0
+                : 0.0;
+            printf("\n[CACHE L3 - UNIFICADA]\n");
+            printf("Acessos Totais: %d (Apenas os Misses da L2 chegam aqui)\n", stats_L3.acessos_totais);
+            printf("Hits: %d | Misses: %d\n", stats_L3.hits, stats_L3.misses);
+            printf("Hit Rate L3: %.2f%%\n", hr_L3);
+        }
 
         printf("\nPressione ENTER para voltar ao menu principal...");
         if (modo_execucao == 1) {

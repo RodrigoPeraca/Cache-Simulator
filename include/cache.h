@@ -17,6 +17,11 @@ typedef enum {
     MODIFIED
 } CacheState;
 
+typedef enum {
+    ACCESS_READ,
+    ACCESS_WRITE
+} CacheAccessType;
+
 #define NUM_CORES 2
 
 // --- CONFIGURAÇÕES DA CACHE L1 (Baseado na Especificação) ---
@@ -31,5 +36,11 @@ typedef enum {
 #define L2_BLOCK_SIZE_BYTES        64    // 64 Bytes
 #define L2_NUM_WAYS                8     // 8-vias
 #define L2_NUM_SETS                (L2_CAPACITY_PER_CORE_BYTES / (L2_BLOCK_SIZE_BYTES * L2_NUM_WAYS))
+
+// --- CONFIGURACOES DA CACHE L3 (Unificada e compartilhada) ---
+#define L3_CAPACITY_BYTES 262144 // 256 KB compartilhados
+#define L3_BLOCK_SIZE_BYTES 64
+#define L3_NUM_WAYS 16
+#define L3_NUM_SETS (L3_CAPACITY_BYTES / (L3_BLOCK_SIZE_BYTES * L3_NUM_WAYS))
 
 #endif

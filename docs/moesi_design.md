@@ -6,7 +6,7 @@ Este documento descreve as mudanças necessárias para reimplementar o protocolo
 
 - Introduzir os estados MOESI (Modified, Owned, Exclusive, Shared, Invalid).
 - Permitir múltiplas caches L1 e L2 privadas, uma par L1/L2 por núcleo.
-- Adicionar uma L3 unificada compartilhada entre os núcleos.
+- Adicionar uma L3 unificada compartilhada entre os núcleos (implementada no LRU).
 - Implementar um barramento de coerência que transporte mensagens entre caches.
 - Preservar e adaptar políticas de substituição (LRU/Mockingjay).
 
@@ -19,48 +19,53 @@ Este documento descreve as mudanças necessárias para reimplementar o protocolo
    - `dirty` (opcional, para compatibilidade)
    - campo de validade/clock/heurística já existentes
 3. Refatorar funções de acesso para receber `core_id` como primeiro argumento.
-   - Exemplo: `int acessar_cache_lru(int core_id, uint32_t endereco);`
+
+- Exemplo: `int acessar_cache_lru(int core_id, uint32_t endereco, CacheAccessType tipo_acesso);`
+
 4. Substituir as instâncias estáticas de arrays de cache L1 por arrays por-core no `LRU`:
 
 - `cache_lru[num_cores][L1_NUM_SETS][L1_NUM_WAYS]` ou alocar dinamicamente por `core`.
 
-5. Fazer a `L2` por núcleo (cada core terá sua L2 privada) e adicionar uma `L3` unificada acima das L2s.
-6. Implementar `src/coherence_bus.c/h` que modela o barramento e entrega mensagens (síncronas no simulador):
+5. Fazer a `L2` por núcleo (cada core terá sua L2 privada) e adicionar uma `L3` unificada acima das L2s (concluído no caminho LRU).
+6. `BusRd` implementado em `src/coherence_bus.c/h` como broadcast síncrono para as L1s remotas; pendem `BusRdX`/`BusUpgr` como transações explícitas e a entrega de payload de dados:
    - Mensagens básicas: `BusRd`, `BusRdX`, `BusUpgr`, `Flush`/`BusWB`.
    - Cada cache, ao detectar miss/upgrade, envia mensagem ao barramento e o barramento notifica as caches.
-7. Implementar o tratamento do estado `Owned`:
-   - Em `BusRd`, se uma cache possui linha em `Modified`, ela pode responder com dados e transitar para `Owned` (não escrever em memória imediatamente).
-   - `Owned` conserva dados válidos e permite que outros caches estejam em `Shared` (memória pode estar desatualizada).
-8. Atualizar a lógica de inserção/expulsão para considerar estados MOESI e necessidade de writeback.
+7. Transições `Owned` básicas entre L1s implementadas: uma leitura remota causa `MODIFIED -> OWNED`, e a escrita de outro núcleo invalida o dono. A transferência dos dados sujos e writeback real ainda estão pendentes.
+8. Atualizar a lógica de inserção/expulsão para considerar estados MOESI e necessidade de writeback (pendente; os bytes do bloco ainda não são modelados).
 9. Atualizar `src/main.c` para suportar execução multicore:
    - Opção para fornecer X traces (ou um trace por core) e política de interleaving.
    - Inicializar caches por core e rodar o motor que alterna acessos entre cores.
 10. Instrumentação: contadores por-core, contadores de mensagens no barramento, latências de writeback e transferências entre caches.
-11. Testes: criar traces multicore sintéticos e casos de coerência (read-after-write, write-after-read, upgrade races).
+11. Teste unitário de transições L1 criado (`tests/test_moesi_l1.c`); traces multicore sintéticos e casos de concorrência/upgrade ainda estão pendentes.
 
 ## Mapa atual de structs, arrays e APIs
 
 ### `include/cache.h`
 
 - `CacheStats`: contém apenas `hits`, `misses` e `acessos_totais`.
-- Macros atuais definem uma L1 e uma L2 global:
+- Macros atuais definem L1/L2 por núcleo e L3 compartilhada:
   - L1: `L1_CAPACITY_PER_CORE_BYTES`, `L1_BLOCK_SIZE_BYTES`, `L1_NUM_WAYS` e `L1_NUM_SETS`.
   - L2: `L2_CAPACITY_PER_CORE_BYTES`, `L2_BLOCK_SIZE_BYTES`, `L2_NUM_WAYS` e `L2_NUM_SETS`.
+- L3: `L3_CAPACITY_BYTES`, `L3_BLOCK_SIZE_BYTES`, `L3_NUM_WAYS` e `L3_NUM_SETS`.
 - Deve passar a concentrar os tipos compartilhados: `CacheState`, metadados de uma linha, configuração por nível e estatísticas de coerência.
-- As constantes da L3 devem ser adicionadas separadamente; não reutilizar as macros da L2.
 
 ### `include/lru.h` e `src/algoritmos/lru.c`
 
 - `LinhaLRU` é privada de `lru.c` e contém `valido`, `tag`, `idade`, `state`, `owner_core` e `dirty`.
+- A L3 usa uma estrutura própria (`LinhaL3`) com `valido`, `tag` e `idade`; não tem proprietário MOESI.
 - Os arrays atuais também são privados e globais ao processo:
   - `cache_lru[NUM_CORES][L1_NUM_SETS][L1_NUM_WAYS]`: uma L1 privada por núcleo.
   - `cache_L2_lru[NUM_CORES][L2_NUM_SETS][L2_NUM_WAYS]`: uma L2 privada por núcleo.
 - APIs atuais:
   - `inicializar_cache_lru()` inicializa L1 e L2 de todos os núcleos.
-  - `acessar_cache_lru(core_id, endereco)` acessa a L1 privada do núcleo informado.
-  - `acessar_L2_lru(core_id, endereco)` acessa a L2 privada do núcleo informado.
+  - `acessar_cache_lru(core_id, endereco, tipo_acesso)` acessa a L1 privada do núcleo informado.
+  - `acessar_L2_lru(core_id, endereco, tipo_acesso)` acessa a L2 privada do núcleo informado.
+  - `acessar_L3_lru(endereco, tipo_acesso)` acessa uma L3 única, compartilhada por todos os núcleos.
   - `imprimir_estado_lru()` imprime as estruturas internas.
 - A adaptação para `core_id` e L1/L2 privadas está concluída no `LRU`, sem alterar o `Mockingjay`.
+- A L3 é consultada após miss na L2; a L3 aplica LRU e é inicializada junto com as caches do LRU.
+- `CacheAccessType` diferencia `ACCESS_READ` e `ACCESS_WRITE`. O LRU executa snoop síncrono entre L1s e aplica transições `I→E`, `E→S`, `S→M`, `M→O`, `O→I` e `E→M`. A escrita em `SHARED` ou `OWNED` invalida as cópias L1 dos demais núcleos.
+- O `BusRd` usa um módulo explícito síncrono; `BusRdX`/`BusUpgr` ainda são implementados pela invalidação direta das outras L1s. O modelo não armazena os bytes dos blocos e não efetua writeback real; coerência e writeback das L2/L3 ainda não estão implementados.
 
 ### `include/mockingjay.h` e `src/algoritmos/mockingjay.c`
 
@@ -75,8 +80,9 @@ Este documento descreve as mudanças necessárias para reimplementar o protocolo
 
 ### `src/main.c`
 
-- `main()` seleciona a política, abre um único trace e envia cada endereço para L1 e, em caso de miss, para L2.
-- `CacheStats stats` e `stats_L2` são locais ao processamento de um trace.
+- `main()` seleciona a política, abre um único trace e, no caminho LRU, envia misses em sequência por L1, L2 e L3.
+- `CacheStats stats`, `stats_L2` e `stats_L3` são locais ao processamento de um trace.
+- O parser do trace aceita `R endereco` e `W endereco`; endereço sem prefixo de operação continua sendo interpretado como leitura para manter compatibilidade com traces antigos.
 - A futura versão multicore precisará separar estatísticas por núcleo e adicionar estatísticas da L3, mas isso deve ser feito somente quando a API do LRU estiver definida.
 
 ## Mapeamento de arquivos e locais a alterar
@@ -86,10 +92,9 @@ Este documento descreve as mudanças necessárias para reimplementar o protocolo
 -- `[include/mockingjay.h](include/mockingjay.h)`: **manter inalterado por enquanto** (Mockingjay será tratado em etapa posterior).
 -- `[src/algoritmos/lru.c](src/algoritmos/lru.c)`: substituir struct de linha por nova struct com `state`; adaptar funções `inicializar_*`, `acessar_*` e `imprimir_estado_*` para operar por core; integrar handlers que respondem a mensagens do barramento (callbacks ou API `coherence_bus_notify(..)`).
 -- `[src/algoritmos/mockingjay.c](src/algoritmos/mockingjay.c)`: deixar inalterado nesta fase.
--- `src/main.c`: adicionar parsing de número de cores / traces por core; inicialização de cada par L1/L2; acesso à L3 unificada; ciclo de execução multicore.
+-- `src/main.c`: ainda falta parsing de número de cores/traces por core e interleaving multicore; o caminho em série L1/L2/L3 do LRU já está conectado.
 
 - `src/coherence_bus.c` e `src/coherence_bus.h` (novo): implementar enfileiramento de mensagens e dispatch para caches.
-- `src/algoritmos/l3_lru.c` e `include/l3_lru.h` (novos, se a L3 usar LRU): implementar a L3 unificada sem misturar seus arrays com os da L2 privada.
 - `Makefile` e `README.md`: adicionar build/test targets e instruções de uso multicore.
 
 ## Protocolos e mensagens (sugestão mínima)
@@ -122,8 +127,24 @@ Este documento descreve as mudanças necessárias para reimplementar o protocolo
 - Preferir alocação dinâmica de estruturas por-core para permitir testes com N variável.
 - Manter overhead de estatísticas (contadores) configurável compile-time via macro.
 
-## Próximos passos propostos (curto prazo)
+## Teste da L3 compartilhada
 
-1. Criar `src/coherence_bus.{c,h}` com API mínima para enviar e entregar mensagens.
+Execute `mingw32-make test-l3` (ou `mingw32-make test` para todos os testes). O teste faz um acesso ao mesmo endereço no core 0 e depois no core 1: ambos têm miss em suas L1/L2 privadas, mas o segundo acesso encontra o bloco na L3 unificada.
 
-As bases de MOESI e da hierarquia privada do `LRU` estão prontas. A próxima etapa é implementar o barramento de coerência, seguida pela L3 unificada. O `Mockingjay` continuará sem alterações.
+Essa verificação cobre compartilhamento e lookup da L3. As transições de coerência L1 são verificadas separadamente por `mingw32-make test-moesi-l1`; execute `mingw32-make test` para rodar todas as suítes existentes.
+
+As capacidades L3 usam valores padrão de 256 KiB, linha de 64 bytes e 16 vias; são ajustáveis pelos defines em `include/cache.h`. O `Mockingjay` continua sem L3 nesta etapa.
+
+## Formato de acesso com leitura/escrita
+
+Para indicar o tipo de operação no trace, use um registro por linha:
+
+```text
+R 0x4000
+W 0x4000
+R 0x4040
+```
+
+`R` significa leitura e `W` escrita (maiúsculas ou minúsculas). Traces antigos contendo somente endereços continuam sendo aceitos e cada registro é tratado como leitura. O trace `traces/moesi_rw_example.txt` serve como exemplo. A API LRU recebe `CacheAccessType` explicitamente; as APIs do `Mockingjay` continuam inalteradas.
+
+As transições L1 são testadas em `tests/test_moesi_l1.c`. O teste cobre leitura exclusiva, compartilhamento após segunda leitura, invalidação em escrita, downgrade `MODIFIED→OWNED` quando outro núcleo lê e invalidação do dono `OWNED` quando o outro núcleo escreve. A implementação ainda não modela transferência de dados nem writeback, e não aplica snoop à L2/L3.
