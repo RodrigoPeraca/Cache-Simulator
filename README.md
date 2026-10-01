@@ -50,4 +50,32 @@ Para verificar a independência da L1 e da L2 entre os núcleos e visualizar os 
 mingw32-make test-lru
 ```
 
-O teste confirma miss/hit independente para os cores 0 e 1 e imprime o estado numérico de cada linha. O valor `2` corresponde a `EXCLUSIVE`. As transições completas do protocolo MOESI ainda dependem da implementação do barramento de coerência.
+O teste confirma miss/hit independente para os cores 0 e 1 e imprime os metadados de cada linha.
+
+Para verificar a L3 unificada compartilhada pelo caminho LRU:
+
+```powershell
+mingw32-make test-l3
+```
+
+O teste demonstra que o mesmo endereço pode causar miss nas L1/L2 privadas dos dois núcleos e hit na L3 compartilhada no segundo núcleo.
+
+Para validar as transições MOESI implementadas nas L1s:
+
+```powershell
+mingw32-make test-moesi-l1
+```
+
+O teste verifica `I→E`, `E→S`, `S→M`, `M→O`, `O→I` e `E→M`. `mingw32-make test` executa todos os testes.
+
+### Formato dos traces para leitura e escrita
+
+O caminho LRU aceita `R endereco` para leitura e `W endereco` para escrita, por exemplo:
+
+```text
+R 0x4000
+W 0x4000
+R 0x4040
+```
+
+Também são aceitos `r`/`w` minúsculos. Traces no formato antigo, com somente endereços, continuam sendo interpretados como leituras. `traces/moesi_rw_example.txt` contém uma sequência curta de exemplo. A coerência atual usa snoop síncrono entre as L1s do LRU. O modelo não representa os dados dos blocos e ainda não implementa writeback, latência do barramento ou snoop/coerência para L2 e L3.
