@@ -31,7 +31,9 @@ Quando um núcleo acessa uma linha, a implementação calcula índice e tag e pr
 
 Em miss de leitura, `src/algoritmos/lru.c` chama `coherence_bus_rd()` em `src/coherence_bus.c`. O barramento faz broadcast síncrono para todas as L1s, exceto a solicitante, e chama o handler de snoop registrado pelo LRU. O handler procura a linha e atualiza `EXCLUSIVE→SHARED` ou `MODIFIED→OWNED`. O retorno informa se alguma L1 remota tinha uma cópia; o solicitante usa essa resposta para instalar `SHARED` ou `EXCLUSIVE`.
 
-Esse `BusRd` é uma transação funcional simplificada: não há fila, arbitragem, latência nem payload de dados. Ele não é enviado em hit de leitura na L1.
+Em miss de escrita ou ao escrever em uma linha `SHARED`/`OWNED`, o LRU chama `coherence_bus_rdx()`. O barramento envia o snoop de invalidação a todas as outras L1s. Cada cópia encontrada passa a inválida; depois o solicitante fica em `MODIFIED`. Uma escrita em `EXCLUSIVE` passa localmente para `MODIFIED`, sem `BusRdX`, pois não há sharers para invalidar.
+
+`BusRd` e `BusRdX` são transações funcionais simplificadas: não há fila, arbitragem, latência nem payload de dados. `BusRd` não é enviado em hit de leitura na L1; `BusRdX` não é enviado em hit de escrita `EXCLUSIVE`/`MODIFIED`.
 
 ## Transições presentes
 
@@ -41,11 +43,11 @@ Esse `BusRd` é uma transação funcional simplificada: não há fila, arbitrage
 | Leitura, linha ausente e outra cópia em `EXCLUSIVE` | `INVALID`           | `SHARED`                        | A cópia existente passa `EXCLUSIVE → SHARED` |
 | Leitura, linha ausente e outra cópia em `MODIFIED`  | `INVALID`           | `SHARED`                        | A cópia modificada passa `MODIFIED → OWNED`  |
 | Escrita em linha própria `EXCLUSIVE`                | `EXCLUSIVE`         | `MODIFIED`                      | Nenhum                                       |
-| Escrita em linha própria `SHARED`                   | `SHARED`            | `MODIFIED`                      | As outras cópias são invalidadas             |
-| Escrita em linha própria `OWNED`                    | `OWNED`             | `MODIFIED`                      | As outras cópias são invalidadas             |
+| Escrita em linha própria `SHARED`                   | `SHARED`            | `MODIFIED`                      | `BusRdX` invalida as outras cópias           |
+| Escrita em linha própria `OWNED`                    | `OWNED`             | `MODIFIED`                      | `BusRdX` invalida as outras cópias           |
 | Escrita em linha própria `MODIFIED`                 | `MODIFIED`          | `MODIFIED`                      | Nenhum                                       |
-| Escrita com miss na L1                              | `INVALID`           | `MODIFIED`                      | Cópias remotas encontradas são invalidadas   |
-| Escrita remota em uma linha compartilhada ou owned  | `SHARED` ou `OWNED` | `MODIFIED` no solicitante       | A cópia remota passa a inválida              |
+| Escrita com miss na L1                              | `INVALID`           | `MODIFIED`                      | `BusRdX` invalida cópias remotas             |
+| Escrita remota em uma linha compartilhada ou owned  | `SHARED` ou `OWNED` | `MODIFIED` no solicitante       | `BusRdX` invalida a cópia remota             |
 
 `INVALID` também é o resultado de `consultar_estado_l1_lru()` quando não há linha válida para o endereço ou quando o identificador de núcleo é inválido.
 
@@ -57,7 +59,7 @@ Considere o mesmo endereço acessado pelos núcleos 0 e 1:
 2. Core 1 lê: encontra a cópia do core 0; core 0 passa `E → S`, e core 1 recebe `S`.
 3. Core 0 escreve: invalida a cópia S do core 1; core 0 passa `S → M`.
 4. Core 1 lê: encontra a cópia M do core 0; core 0 passa `M → O`, e core 1 recebe `S`.
-5. Core 1 escreve: invalida a cópia O do core 0; core 1 passa `S → M`.
+5. Core 1 escreve: envia `BusRdX`, invalida a cópia O do core 0; core 1 passa `S → M`.
 
 Os estados são verificáveis com `consultar_estado_l1_lru(core_id, endereco)`.
 
@@ -75,11 +77,19 @@ O caso está implementado em `tests/test_moesi_l1.c` e valida `I→E`, `E→S`, 
 mingw32-make test
 ```
 
+Para medir somente hits/misses L1 em um trace, sem passar pelas APIs de L2/L3:
+
+```powershell
+mingw32-make bench-l1 TRACE=traces/l1_moesi_interleaved.txt
+```
+
+O runner aceita linhas `core R/W endereço`, por exemplo `0 R 0x8000`, e processa os acessos na ordem do arquivo. Ele reporta estatísticas por núcleo e total; não mede tempo real nem ciclos de memória.
+
 ## O que este modelo ainda não simula
 
 As transições descrevem estados e validade das cópias, não movimentação real de dados. As estruturas não armazenam bytes de cada linha. Portanto:
 
-- `BusRd` já é um broadcast síncrono explícito. `BusRdX` e `BusUpgr` ainda não são transações do barramento; as escritas invalidam cópias diretamente pelo LRU.
+- `BusRd` e `BusRdX` são broadcasts síncronos explícitos. `BusUpgr` ainda não foi separado: atualmente um upgrade `SHARED/OWNED` usa `BusRdX`.
 - O `dirty` é metadado; não existe writeback de conteúdo modificado para L2, L3 ou memória.
 - Ao invalidar uma linha remota `MODIFIED` ou `OWNED`, não há transferência explícita dos dados sujos antes da invalidação.
 - A L2 e a L3 não são snoopadas nem mantêm estados MOESI coerentes com as L1s.
