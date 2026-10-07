@@ -27,7 +27,7 @@ Este documento descreve as mudanças necessárias para reimplementar o protocolo
 - `cache_lru[num_cores][L1_NUM_SETS][L1_NUM_WAYS]` ou alocar dinamicamente por `core`.
 
 5. Fazer a `L2` por núcleo (cada core terá sua L2 privada) e adicionar uma `L3` unificada acima das L2s (concluído no caminho LRU).
-6. `BusRd` implementado em `src/coherence_bus.c/h` como broadcast síncrono para as L1s remotas; pendem `BusRdX`/`BusUpgr` como transações explícitas e a entrega de payload de dados:
+6. `BusRd` e `BusRdX` implementados em `src/coherence_bus.c/h` como broadcasts síncronos para as L1s remotas; `BusUpgr` ainda não foi separado e falta a entrega de payload de dados:
    - Mensagens básicas: `BusRd`, `BusRdX`, `BusUpgr`, `Flush`/`BusWB`.
    - Cada cache, ao detectar miss/upgrade, envia mensagem ao barramento e o barramento notifica as caches.
 7. Transições `Owned` básicas entre L1s implementadas: uma leitura remota causa `MODIFIED -> OWNED`, e a escrita de outro núcleo invalida o dono. A transferência dos dados sujos e writeback real ainda estão pendentes.
@@ -65,7 +65,7 @@ Este documento descreve as mudanças necessárias para reimplementar o protocolo
 - A adaptação para `core_id` e L1/L2 privadas está concluída no `LRU`, sem alterar o `Mockingjay`.
 - A L3 é consultada após miss na L2; a L3 aplica LRU e é inicializada junto com as caches do LRU.
 - `CacheAccessType` diferencia `ACCESS_READ` e `ACCESS_WRITE`. O LRU executa snoop síncrono entre L1s e aplica transições `I→E`, `E→S`, `S→M`, `M→O`, `O→I` e `E→M`. A escrita em `SHARED` ou `OWNED` invalida as cópias L1 dos demais núcleos.
-- O `BusRd` usa um módulo explícito síncrono; `BusRdX`/`BusUpgr` ainda são implementados pela invalidação direta das outras L1s. O modelo não armazena os bytes dos blocos e não efetua writeback real; coerência e writeback das L2/L3 ainda não estão implementados.
+- `BusRd` e `BusRdX` usam o módulo explícito síncrono. `BusUpgr` ainda usa `BusRdX`; as transações não transportam payload e a invalidação de uma linha dirty não faz writeback real. Coerência das L2/L3 também não está implementada.
 
 ### `include/mockingjay.h` e `src/algoritmos/mockingjay.c`
 

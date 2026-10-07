@@ -68,6 +68,31 @@ mingw32-make test-moesi-l1
 
 O teste verifica `I→E`, `E→S`, `S→M`, `M→O`, `O→I` e `E→M`. `mingw32-make test` executa todos os testes.
 
+### Benchmark direto da L1
+
+O runner standalone acessa diretamente `acessar_cache_lru()` e não consulta L2/L3. Para executar o trace intercalado de exemplo:
+
+```powershell
+mingw32-make bench-l1
+```
+
+Para escolher outro trace:
+
+```powershell
+mingw32-make bench-l1 TRACE=traces/circular_buffer_thrashing.txt
+```
+
+O runner aceita três formatos, um acesso por linha:
+
+```text
+0 R 0x8000
+1 W 0x8000
+R 0x8040
+0x8080
+```
+
+O formato `core R/W endereço` simula acessos intercalados aos núcleos na ordem das linhas. Os formatos sem núcleo usam o core 0; endereço sem operação é uma leitura. O resultado mostra hits, misses e hit rate globais e por núcleo. Essas métricas descrevem o comportamento simulado da L1, não o tempo real do programa nem latência de memória.
+
 ### Formato dos traces para leitura e escrita
 
 O caminho LRU aceita `R endereco` para leitura e `W endereco` para escrita, por exemplo:

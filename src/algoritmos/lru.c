@@ -77,18 +77,19 @@ static int snoop_leitura_l1(int snooper_core, uint32_t endereco) {
     return 1;
 }
 
-static void snoop_escrita_l1(int requester_core, uint32_t indice, uint32_t tag) {
-    for (int core = 0; core < NUM_CORES; core++) {
-        if (core == requester_core) continue;
+static int snoop_invalidar_l1(int snooper_core, uint32_t endereco) {
+    if (!core_valido(snooper_core)) return 0;
 
-        LinhaLRU *linha = buscar_linha_l1(core, indice, tag);
-        if (linha == NULL) continue;
+    LinhaLRU *linha = buscar_linha_l1(snooper_core,
+                                      obter_indice(endereco),
+                                      obter_tag(endereco));
+    if (linha == NULL) return 0;
 
-        linha->valido = 0;
-        linha->state = INVALID;
-        linha->owner_core = -1;
-        linha->dirty = 0;
-    }
+    linha->valido = 0;
+    linha->state = INVALID;
+    linha->owner_core = -1;
+    linha->dirty = 0;
+    return 1;
 }
 
 static void atualizar_lru(int core_id, uint32_t indice, int via_acessada) {
@@ -147,7 +148,7 @@ static void atualizar_idade_L3(uint32_t indice, int via_acessada) {
 }
 
 void inicializar_cache_lru(void) {
-    coherence_bus_init(snoop_leitura_l1);
+    coherence_bus_init(snoop_leitura_l1, snoop_invalidar_l1);
 
     for (int core = 0; core < NUM_CORES; core++) {
         for (int i = 0; i < L1_NUM_SETS; i++) {
@@ -202,7 +203,7 @@ int acessar_cache_lru(int core_id, uint32_t endereco, CacheAccessType tipo_acess
         int via = (int)(linha - &cache_lru[core_id][indice][0]);
         if (tipo_acesso == ACCESS_WRITE) {
             if (linha->state == SHARED || linha->state == OWNED) {
-                snoop_escrita_l1(core_id, indice, tag);
+                coherence_bus_rdx(core_id, endereco);
             }
             if (linha->state == EXCLUSIVE || linha->state == SHARED ||
                 linha->state == OWNED || linha->state == MODIFIED) {
@@ -236,7 +237,7 @@ int acessar_cache_lru(int core_id, uint32_t endereco, CacheAccessType tipo_acess
     if (tipo_acesso == ACCESS_READ) {
         encontrou_copia_remota = coherence_bus_rd(core_id, endereco);
     } else {
-        snoop_escrita_l1(core_id, indice, tag);
+        coherence_bus_rdx(core_id, endereco);
     }
 
     LinhaLRU *nova_linha = &cache_lru[core_id][indice][via_substituir];
