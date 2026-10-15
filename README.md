@@ -82,6 +82,14 @@ Para escolher outro trace:
 mingw32-make bench-l1 TRACE=traces/circular_buffer_thrashing.txt
 ```
 
+Para ver cada acesso, os `BusRd`/`BusRdX`, respostas de snoop e mudanças de estado:
+
+```powershell
+mingw32-make bench-l1-verbose
+```
+
+O trace padrão intercalado mostra, por exemplo, o core 1 encontrando a cópia lógica do core 0 (`EXCLUSIVE→SHARED`) e depois uma escrita invalidando o sharer (`SHARED→INVALID`). A linha `data_source=REMOTE_L1` identifica a origem lógica; o simulador ainda não copia bytes reais entre caches nem consulta a memória nesse runner.
+
 O runner aceita três formatos, um acesso por linha:
 
 ```text

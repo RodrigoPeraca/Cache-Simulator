@@ -85,6 +85,14 @@ mingw32-make bench-l1 TRACE=traces/l1_moesi_interleaved.txt
 
 O runner aceita linhas `core R/W endereço`, por exemplo `0 R 0x8000`, e processa os acessos na ordem do arquivo. Ele reporta estatísticas por núcleo e total; não mede tempo real nem ciclos de memória.
 
+Para acompanhar a comunicação e cada estado durante a execução:
+
+```powershell
+mingw32-make bench-l1-verbose
+```
+
+O log mostra cada acesso e seu estado antes/depois, a emissão de `BusRd` ou `BusRdX`, as respostas de snoop e as linhas rebaixadas ou invalidadas. Em `BusRd`, `data_source=REMOTE_L1` significa que outra L1 tem uma cópia segundo o modelo de estados; como o simulador ainda não armazena os bytes da linha, isso não é uma transferência física de payload. `LOWER_LEVEL` significa apenas que nenhum snooper L1 respondeu: esse runner não consulta L2, L3 nem memória.
+
 ## O que este modelo ainda não simula
 
 As transições descrevem estados e validade das cópias, não movimentação real de dados. As estruturas não armazenam bytes de cada linha. Portanto:

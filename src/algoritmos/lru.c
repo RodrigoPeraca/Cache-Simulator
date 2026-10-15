@@ -67,11 +67,18 @@ static int snoop_leitura_l1(int snooper_core, uint32_t endereco) {
                                       obter_tag(endereco));
     if (linha == NULL) return 0;
 
+    CacheState estado_anterior = linha->state;
     if (linha->state == EXCLUSIVE) {
         linha->state = SHARED;
         linha->owner_core = -1;
     } else if (linha->state == MODIFIED) {
         linha->state = OWNED;
+    }
+
+    if (coherence_bus_is_verbose()) {
+        printf("  [SNOOP] core%d linha 0x%08X: %s -> %s\n",
+               snooper_core, (unsigned int)endereco,
+               nome_estado(estado_anterior), nome_estado(linha->state));
     }
 
     return 1;
@@ -85,10 +92,20 @@ static int snoop_invalidar_l1(int snooper_core, uint32_t endereco) {
                                       obter_tag(endereco));
     if (linha == NULL) return 0;
 
+    CacheState estado_anterior = linha->state;
+    uint8_t dirty = linha->dirty;
     linha->valido = 0;
     linha->state = INVALID;
     linha->owner_core = -1;
     linha->dirty = 0;
+
+    if (coherence_bus_is_verbose()) {
+        printf("  [SNOOP] core%d linha 0x%08X: %s -> INVALID dirty=%u",
+               snooper_core, (unsigned int)endereco,
+               nome_estado(estado_anterior), dirty);
+        if (dirty) printf(" (payload dirty nao transferido neste modelo)");
+        printf("\n");
+    }
     return 1;
 }
 
@@ -202,6 +219,7 @@ int acessar_cache_lru(int core_id, uint32_t endereco, CacheAccessType tipo_acess
     if (linha != NULL) {
         int via = (int)(linha - &cache_lru[core_id][indice][0]);
         if (tipo_acesso == ACCESS_WRITE) {
+            CacheState estado_anterior = linha->state;
             if (linha->state == SHARED || linha->state == OWNED) {
                 coherence_bus_rdx(core_id, endereco);
             }
@@ -210,6 +228,14 @@ int acessar_cache_lru(int core_id, uint32_t endereco, CacheAccessType tipo_acess
                 linha->state = MODIFIED;
                 linha->owner_core = core_id;
                 linha->dirty = 1;
+            }
+            if (coherence_bus_is_verbose()) {
+                printf("  [L1] core%d linha 0x%08X: %s -> %s%s\n",
+                       core_id, (unsigned int)endereco,
+                       nome_estado(estado_anterior), nome_estado(linha->state),
+                       (estado_anterior == SHARED || estado_anterior == OWNED)
+                           ? " apos BusRdX"
+                           : " local");
             }
         }
         atualizar_lru(core_id, indice, via);
@@ -249,6 +275,10 @@ int acessar_cache_lru(int core_id, uint32_t endereco, CacheAccessType tipo_acess
     nova_linha->owner_core = nova_linha->state == SHARED ? -1 : core_id;
     nova_linha->dirty = tipo_acesso == ACCESS_WRITE;
     atualizar_lru(core_id, indice, via_substituir);
+    if (coherence_bus_is_verbose()) {
+        printf("  [L1] core%d install addr=0x%08X: INVALID -> %s\n",
+               core_id, (unsigned int)endereco, nome_estado(nova_linha->state));
+    }
     return 0;
 }
 
