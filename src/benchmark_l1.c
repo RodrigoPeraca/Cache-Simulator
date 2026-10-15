@@ -1,4 +1,5 @@
 #include "../include/lru.h"
+#include "../include/coherence_bus.h"
 #include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
@@ -17,6 +18,17 @@ typedef struct {
     uint64_t reads;
     uint64_t writes;
 } L1BenchmarkStats;
+
+static const char *state_name(CacheState state) {
+    switch (state) {
+        case INVALID: return "INVALID";
+        case SHARED: return "SHARED";
+        case EXCLUSIVE: return "EXCLUSIVE";
+        case OWNED: return "OWNED";
+        case MODIFIED: return "MODIFIED";
+        default: return "UNKNOWN";
+    }
+}
 
 static int parse_core(const char *token, int *core_id) {
     char *end;
@@ -99,15 +111,28 @@ static double hit_rate(const L1BenchmarkStats *stats) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        fprintf(stderr, "Uso: %s <arquivo-trace>\n", argv[0]);
+    const char *trace_path = NULL;
+    int verbose = 0;
+    for (int argument = 1; argument < argc; argument++) {
+        if (strcmp(argv[argument], "--verbose") == 0) {
+            verbose = 1;
+        } else if (trace_path == NULL) {
+            trace_path = argv[argument];
+        } else {
+            trace_path = NULL;
+            break;
+        }
+    }
+
+    if (trace_path == NULL) {
+        fprintf(stderr, "Uso: %s [--verbose] <arquivo-trace>\n", argv[0]);
         fprintf(stderr, "Formatos: endereco | R/W endereco | core R/W endereco\n");
         return 2;
     }
 
-    FILE *trace = fopen(argv[1], "r");
+    FILE *trace = fopen(trace_path, "r");
     if (trace == NULL) {
-        perror(argv[1]);
+        perror(trace_path);
         return 1;
     }
 
@@ -117,6 +142,7 @@ int main(int argc, char **argv) {
     unsigned long line_number = 0;
     int parse_status;
 
+    coherence_bus_set_verbose(verbose);
     inicializar_cache_lru();
 
     while (fgets(line, sizeof(line), trace) != NULL) {
@@ -130,12 +156,25 @@ int main(int argc, char **argv) {
         if (parse_status < 0) {
             fprintf(stderr,
                     "%s:%lu: registro invalido; esperado endereco, R/W endereco ou core R/W endereco\n",
-                    argv[1], line_number);
+                    trace_path, line_number);
             fclose(trace);
             return 1;
         }
 
+        CacheState state_before = consultar_estado_l1_lru(core_id, address);
+        if (verbose) {
+                 printf("[ACCESS %" PRIu64 "] core%d %s 0x%08X state_before=%s\n",
+                   total.accesses + 1, core_id,
+                   operation == ACCESS_READ ? "READ" : "WRITE",
+                     (unsigned int)address, state_name(state_before));
+        }
+
         int hit = acessar_cache_lru(core_id, address, operation);
+        CacheState state_after = consultar_estado_l1_lru(core_id, address);
+        if (verbose) {
+                 printf("[ACCESS %" PRIu64 "] result=%s state_after=%s\n",
+                     total.accesses + 1, hit ? "HIT" : "MISS", state_name(state_after));
+        }
         L1BenchmarkStats *core_stats = &per_core[core_id];
         core_stats->accesses++;
         total.accesses++;
@@ -162,7 +201,7 @@ int main(int argc, char **argv) {
     }
     fclose(trace);
 
-    printf("Benchmark L1 LRU: %s\n", argv[1]);
+    printf("Benchmark L1 LRU: %s\n", trace_path);
     printf("Escopo: somente L1; sem lookup de L2/L3.\n");
     for (int core_id = 0; core_id < NUM_CORES; core_id++) {
         const L1BenchmarkStats *stats = &per_core[core_id];

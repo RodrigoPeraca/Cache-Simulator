@@ -35,5 +35,8 @@ benchmark-l1:
 bench-l1: benchmark-l1
 	$(BENCHMARK_L1) "$(TRACE)"
 
+bench-l1-verbose: benchmark-l1
+	$(BENCHMARK_L1) --verbose "$(TRACE)"
+
 clean:
 	rm -f $(EXEC) $(TEST_LRU) $(TEST_L3) $(TEST_MOESI_L1) $(BENCHMARK_L1)
